@@ -1,0 +1,23 @@
+# Environments
+*.py[oc]
+build/
+dist/
+wheels/
+.DS_Store
+.venv
+.python-version
+pyproject.toml
+uv.lock
+
+*.egg-info
+__pycache__/
+
+
+# Results or Logs
+outputs/
+gorilla/
+run_bfcl*
+run_thinkless*
+bfcl/
+generate_thinkless.py
+json_to_csv.ipynb

@@ -5,7 +5,6 @@
 
 Official implementation of **ThinkBrake: Mitigating Overthinking in Tool Reasoning**.
 
-This codebase features a high-performance **asynchronous SGLang engine** to maximize GPU utilization and generation throughput.
 
 ## Overview
 
@@ -17,17 +16,12 @@ Small reasoning models often "overthink" — they reach a correct conclusion but
 
 ## Installation
 
-### Prerequisites
-- Python 3.10+
-- CUDA-enabled GPU
-- `uv` (recommended) or `pip`
-
 ### Quick Start
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/your-username/think-brake.git
-   cd think-brake
+   git clone https://github.com/ssangjun706/ThinkBrake.git
+   cd ThinkBrake
    ```
 
 2. **Install dependencies**
@@ -39,7 +33,6 @@ Small reasoning models often "overthink" — they reach a correct conclusion but
 
 ### 1. Generation (ThinkBrake)
 
-Run the generation script to apply the ThinkBrake heuristic. The script uses `asyncio` for fast batch processing.
 
 ```bash
 python thinkbrake/scripts/generate.py \
@@ -60,7 +53,7 @@ python thinkbrake/scripts/generate.py \
 
 ### 2. Rollout (Standard Generation)
 
-To run standard generation (without ThinkBrake early stopping) for baselines:
+To run standard generation for baselines:
 
 ```bash
 python thinkbrake/scripts/rollout.py \
@@ -98,12 +91,16 @@ bash run_evaluate.sh
 
 **Models:**
 - `Qwen/Qwen3-4B-Thinking-2507`
+- `Qwen/Qwen3-4B`
 - `Qwen/Qwen3-14B`
+- `Qwen/Qwen3-32B`
 - `deepseek-ai/DeepSeek-R1-Distill-Llama-8B`
+- `deepseek-ai/DeepSeek-R1-Distill-Qwen-7B`
+- `openai/gpt-oss-20b`
 
 **Datasets:**
 - **Math**: `gsm8k`, `math500`, `aime2024`, `aime2025`
-- **General**: `gpqa-diamond`, `mmlu-pro`
+- **General**: `gpqa-diamond`, `mmlu-redux`, `mmlu-pro`
 
 ## Citation
 

@@ -9,11 +9,11 @@ MODEL_MAPPING = {
     "Qwen/Qwen3-4B-Thinking-2507": Qwen3Handler,
     "Qwen/Qwen3-4B": Qwen3Handler,
     "Qwen/Qwen3-14B": Qwen3Handler,
-    "Qwen/Qwen3-32B": Qwen3Handler,
     # "microsoft/Phi-4-reasoning": Phi4Handler,
     "deepseek-ai/DeepSeek-R1-Distill-Llama-8B": DeepSeekHandler,
     "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B": DeepSeekHandler,
     "openai/gpt-oss-20b": GptOssHandler,
+    "Qwen/Qwen3-32B": Qwen3Handler,
 }
 
 CATEGORY_MAPPING = {

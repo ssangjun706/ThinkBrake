@@ -8,6 +8,7 @@ wheels/
 .python-version
 pyproject.toml
 uv.lock
+main.py
 
 *.egg-info
 __pycache__/
@@ -15,9 +16,3 @@ __pycache__/
 
 # Results or Logs
 outputs/
-gorilla/
-run_bfcl*
-run_thinkless*
-bfcl/
-generate_thinkless.py
-json_to_csv.ipynb

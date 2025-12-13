@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export THINKBRAKE_ROOT=/home/work/sglang_thinkbrake
+export THINKBRAKE_ROOT=/home/work/ThinkBrake
 
 source .venv/bin/activate
 

@@ -6,11 +6,11 @@ source .venv/bin/activate
 
 MODEL="all"
 CATEGORY="all"
-THRESHOLD="0.25,1.0,2.5"
+THRESHOLD="0.1,0.25,1.0,2.5"
 NUM_WORKERS=24
 REASONING_TOKENS_BUDGET=16384
 ANSWER_TOKENS_BUDGET=4096
-MEM_FRACTION_STATIC=0.65
+MEM_FRACTION_STATIC=0.8
 
 python thinkbrake/scripts/generate.py \
     --model $MODEL \

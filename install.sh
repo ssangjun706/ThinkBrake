@@ -16,4 +16,4 @@ uv pip install sglang
 uv pip install math-verify[antlr4_13_2]
 uv pip install -e .
 
-uv pip install ipykernel ipywidgets
+uv pip install ipykernel ipywidgets matplotlib seaborn

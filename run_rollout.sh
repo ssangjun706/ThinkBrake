@@ -4,12 +4,12 @@ export THINKBRAKE_ROOT=/home/work/ThinkBrake
 
 source .venv/bin/activate
 
-MODEL="Qwen/Qwen3-32B"
+MODEL="all"
 CATEGORY="all"
 REASONING_TOKENS_BUDGET=16384
 ANSWER_TOKENS_BUDGET=4096
-NUM_WORKERS=10
-MEM_FRACTION_STATIC=0.6
+NUM_WORKERS=24
+MEM_FRACTION_STATIC=0.8
 
 python thinkbrake/scripts/rollout.py \
     --model $MODEL \

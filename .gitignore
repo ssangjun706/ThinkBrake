@@ -15,5 +15,9 @@ __pycache__/
 
 
 # Results or Logs
-outputs/
 slurm_output/
+leaderboard*
+threshold_0.0/
+threshold_5.0/
+thinkless/
+oracle/

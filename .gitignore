@@ -16,3 +16,4 @@ __pycache__/
 
 # Results or Logs
 outputs/
+slurm_output/

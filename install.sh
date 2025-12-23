@@ -1,7 +1,5 @@
 #!/bin/bash
 
-sudo apt update
-sudo apt-get install tmux -y
 
 curl -LsSf https://astral.sh/uv/install.sh | sh
 

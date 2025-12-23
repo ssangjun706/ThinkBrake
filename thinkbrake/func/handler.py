@@ -190,7 +190,6 @@ class BaseHandler:
     def __init__(self, pretrained_model_name_or_path: str):
         self.client: Optional[sgl.Runtime] = None
         self.pretrained_model_name_or_path = pretrained_model_name_or_path
-        self.reasoning_chunk_size: Optional[int] = None
         self.runtime: Optional[sgl.Runtime] = None
         self.max_total_tokens: Optional[int] = None
 
@@ -242,7 +241,7 @@ class BaseHandler:
     def _postprocess_response(self, state: Any) -> dict:
         meta_info = state.get_meta_info("final_answer")
         result_dict = {
-            "reasoning": state.text(),
+            "entire_response": state.text(),
             "response": state["final_answer"],
             "token_length": meta_info["prompt_tokens"] + meta_info["completion_tokens"],
         }
@@ -293,7 +292,6 @@ class BaseHandler:
                 answer_tokens_budget or 0
             )
             if total_requested > self.max_total_tokens:
-                # Proportionally scale down both budgets
                 scale_factor = self.max_total_tokens / total_requested
                 effective_reasoning_budget = int(
                     (reasoning_tokens_budget or 0) * scale_factor
@@ -337,6 +335,22 @@ class BaseHandler:
 
         return self._postprocess_response(state)
 
+    async def inference_oracle(self, entry: dict) -> dict:
+        loop = asyncio.get_running_loop()
+
+        input_params = {
+            "prompt": self._format_prompt(entry),
+            "eos_token": self.eos_token,
+            "max_tokens": self.max_total_tokens,
+            "sampling_params": self.sampling_params,
+        }
+
+        def _run_sync_rollout():
+            return run_rollout.run(stream=False, **input_params)
+
+        state = await loop.run_in_executor(None, _run_sync_rollout)
+        return self._postprocess_response(state)
+
 
 class DeepSeekHandler(BaseHandler):
     """Handler for DeepSeek R1/Distill models."""
@@ -347,6 +361,7 @@ class DeepSeekHandler(BaseHandler):
         self.prefix_token = ".\n"
         self.suffix_token = "\n\n"
         self.eot_token = "</think>"
+        self.bot_token = "<think>"
         self.sampling_params = {
             "temperature": 0.6,
         }
@@ -354,6 +369,7 @@ class DeepSeekHandler(BaseHandler):
     def _format_prompt(self, entry: dict) -> str:
         problem = entry["problem"]
         category = entry["category"]
+        assistant = entry.get("assistant", None)
 
         formatted_prompt = f"<｜begin of sentence｜><｜User｜>{problem}\n\n"
 
@@ -361,6 +377,9 @@ class DeepSeekHandler(BaseHandler):
             formatted_prompt += "Please reason step by step, and put your final answer within \\boxed{}."
 
         formatted_prompt += f"<｜Assistant｜><think>\n"
+
+        if assistant:
+            formatted_prompt += assistant
 
         return formatted_prompt
 
@@ -377,6 +396,7 @@ class Qwen3Handler(BaseHandler):
         self.prefix_token = ".\n"
         self.suffix_token = "\n\n"
         self.eot_token = "</think>"
+        self.bot_token = "<think>"
         self.sampling_params = {
             "temperature": 0.6,
             "top_p": 0.95,
@@ -387,6 +407,7 @@ class Qwen3Handler(BaseHandler):
     def _format_prompt(self, entry: dict) -> str:
         problem = entry["problem"]
         category = entry["category"]
+        assistant = entry.get("assistant", None)
 
         formatted_prompt = f"<|im_start|>user\n{problem}\n\n"
 
@@ -397,6 +418,9 @@ class Qwen3Handler(BaseHandler):
 
         formatted_prompt += "<|im_end|>\n"
         formatted_prompt += f"<|im_start|>assistant\n<think>\n"
+
+        if assistant:
+            formatted_prompt += assistant
 
         return formatted_prompt
 
@@ -413,6 +437,7 @@ class Phi4Handler(BaseHandler):
         self.prefix_token = "."
         self.suffix_token = ""
         self.eot_token = "</think>"
+        self.bot_token = "<think>"
         self.sampling_params = {
             "temperature": 0.8,
             "top_p": 0.95,
@@ -446,32 +471,32 @@ class Phi4Handler(BaseHandler):
         return formatted_prompt
 
 
-class GptOssHandler(BaseHandler):
-    """Handler for GPT-OSS (example) models."""
+# class GptOssHandler(BaseHandler):
+#     """Handler for GPT-OSS (example) models."""
 
-    def __init__(self, pretrained_model_name_or_path: str):
-        super().__init__(pretrained_model_name_or_path)
-        self.eos_token = "<|return|>"
-        self.prefix_token = "."
-        self.suffix_token = ""
-        self.eot_token = "<|end|>"
-        self.sampling_params = {}
+#     def __init__(self, pretrained_model_name_or_path: str):
+#         super().__init__(pretrained_model_name_or_path)
+#         self.eos_token = "<|return|>"
+#         self.prefix_token = "."
+#         self.suffix_token = ""
+#         self.eot_token = "<|end|>"
+#         self.sampling_params = {}
 
-        self.current_date = datetime.now().strftime("%Y-%m-%d")
-        self.reasoning_level = "high"
+#         self.current_date = datetime.now().strftime("%Y-%m-%d")
+#         self.reasoning_level = "high"
 
-    def _format_prompt(self, entry: dict) -> str:
-        problem = entry["problem"]
+#     def _format_prompt(self, entry: dict) -> str:
+#         problem = entry["problem"]
 
-        formatted_prompt = f"""<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.
-Knowledge cutoff: 2024-06
-Current date: {self.current_date}
+#         formatted_prompt = f"""<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.
+# Knowledge cutoff: 2024-06
+# Current date: {self.current_date}
 
-Reasoning: {self.reasoning_level}
+# Reasoning: {self.reasoning_level}
 
-# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>"""
+# # Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>"""
 
-        formatted_prompt += f"<|start|>user<|message|>{problem}<|end|>"
-        formatted_prompt += "<|start|>assistant<|channel|>analysis<|message|>"
+#         formatted_prompt += f"<|start|>user<|message|>{problem}<|end|>"
+#         formatted_prompt += "<|start|>assistant<|channel|>analysis<|message|>"
 
-        return formatted_prompt
+#         return formatted_prompt

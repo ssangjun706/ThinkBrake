@@ -3,7 +3,7 @@ import random
 import re
 
 from typing import Optional, Union, Set
-from thinkbrake.func.constants import DATA_DIR, RESULT_DIR
+from thinkbrake.func.constants import DATA_DIR, RESULT_DIR, ROLLOUT_PREFIX
 from thinkbrake.func.mapping import MODEL_MAPPING, CATEGORY_MAPPING
 from thinkbrake.func.handler import BaseHandler
 
@@ -69,14 +69,9 @@ def get_handler(pretrained_model_name_or_path: str) -> BaseHandler:
 
 
 def get_test_case_id(test_case: dict) -> str:
-    """
-    Generates a unique ID for a test case.
-
-    Combines 'id' and optional 'sentence_id'.
-    """
     test_case_id = str(test_case["id"])
-    if "sentence_id" in test_case:
-        test_case_id += f"_{test_case['sentence_id']}"
+    if "sentence_idx" in test_case:
+        test_case_id += f"_{test_case['sentence_idx']}"
 
     return test_case_id
 
@@ -92,7 +87,7 @@ def sort_key(item: dict) -> tuple:
     if num.isdigit():
         num = int(num)
 
-    sentence_id = item.get("sentence_id", 0)
+    sentence_id = item.get("sentence_idx", 0)
     return (num, sentence_id)
 
 
@@ -168,16 +163,16 @@ def get_models(models: str) -> list[str]:
 def get_thresholds(thresholds: Optional[str]) -> list[Optional[float]]:
     """
     Parses threshold string (comma-separated) into a list of float values.
-    
+
     Args:
         thresholds: Comma-separated threshold values (e.g., "0.1,0.5,0.9") or None.
-    
+
     Returns:
         List of threshold values. Returns [None] if input is None.
     """
     if thresholds is None:
         return [None]
-    
+
     parsed_thresholds = []
     for threshold in thresholds.split(","):
         threshold = threshold.strip()
@@ -185,7 +180,7 @@ def get_thresholds(thresholds: Optional[str]) -> list[Optional[float]]:
             parsed_thresholds.append(float(threshold))
         except ValueError:
             raise ValueError(f"Invalid threshold value: {threshold}")
-    
+
     return parsed_thresholds
 
 
@@ -301,3 +296,38 @@ def save_result(
                 content = json.dumps(entry) + "\n"
                 f.write(content)
             f.flush()
+
+
+def split_sentence(
+    items: list[dict],
+    prefix="",
+    eot_token="",
+) -> list[dict]:
+    test_cases = []
+    suffix = prefix + eot_token
+    for idx in range(len(items)):
+        entire_response = items[idx].get("response", None)
+
+        if entire_response is None:
+            assert False, "No reasoning found to split."
+
+        sentences = entire_response.split(eot_token)[0]
+        sentences = sentences.rstrip().split(". ")
+
+        concat_sents = []
+        for i in range(len(sentences)):
+            concat_sents.append(". ".join(sentences[: i + 1]))
+
+        for i in range(len(concat_sents)):
+            test_cases.append(
+                {
+                    "id": items[idx]["id"],
+                    "category": items[idx]["category"],
+                    "sentence_idx": i,
+                    "problem": items[idx]["problem"],
+                    "answer": items[idx]["answer"],
+                    "assistant": concat_sents[i] + suffix,
+                }
+            )
+
+    return test_cases

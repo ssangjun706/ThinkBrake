@@ -3,6 +3,7 @@ import os
 
 ROLLOUT_PREFIX = "rollout"
 THINKBRAKE_PREFIX = "thinkbrake"
+ORACLE_PREFIX = "oracle"
 THINKLESS_PREFIX = "thinkless"
 
 ROOT_DIR = Path(

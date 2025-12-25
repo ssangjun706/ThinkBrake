@@ -5,10 +5,10 @@ export THINKBRAKE_ROOT=/home/work/ThinkBrake
 source .venv/bin/activate
 
 MODEL="Qwen/Qwen3-4B-Thinking-2507"
-CATEGORY="aime2024"
+CATEGORY="tool"
 REASONING_TOKENS_BUDGET=16384
 ANSWER_TOKENS_BUDGET=4096
-NUM_WORKERS=24
+NUM_WORKERS=16
 MEM_FRACTION_STATIC=0.8
 
 python thinkbrake/scripts/rollout.py \

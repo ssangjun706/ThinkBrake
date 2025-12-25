@@ -1,8 +1,7 @@
 import sglang as sgl
-import json
 import asyncio
+import json
 
-from datetime import datetime
 from typing import Optional, final, Any
 
 
@@ -20,37 +19,16 @@ def run_thinkbrake_step(
     max_total_tokens: Optional[int] = None,
     sampling_params: Optional[dict] = None,
 ):
-    """
-    SGLang function to run a single step of ThinkBrake reasoning.
-
-    This function generates the reasoning trace (thought process) and monitors the
-    token probabilities to decide when to stop thinking (braking) and generate the final answer.
-
-    Args:
-        s: The SGLang state object.
-        prompt: The input prompt.
-        threshold: Probability threshold for early stopping of reasoning.
-        eot_token: End-of-thought token.
-        eos_token: End-of-sentence token.
-        prefix_token: Token to prepend to the closing sequence.
-        suffix_token: Token to append to the closing sequence.
-        reasoning_tokens_budget: Max tokens for reasoning.
-        answer_tokens_budget: Max tokens for the final answer.
-        max_total_tokens: Hard cap on total tokens (reasoning + answer).
-        sampling_params: Sampling parameters for generation.
-    """
     s += prompt
     reasoning_budget = (
         reasoning_tokens_budget if reasoning_tokens_budget is not None else 16384
     )
     answer_budget = answer_tokens_budget if answer_tokens_budget is not None else 2048
 
-    # Calculate effective total budget
     total_budget = reasoning_budget + answer_budget
     if max_total_tokens is not None:
         total_budget = min(total_budget, max_total_tokens)
 
-    # Track total tokens used across reasoning
     total_reasoning_tokens_used = 0
     remaining_tokens = reasoning_budget
 
@@ -61,13 +39,10 @@ def run_thinkbrake_step(
     closing_sequence = closing_token + (suffix_token or "")
 
     while True:
-        # Calculate chunk budget respecting total limit
-        # Ensure we leave room for answer_budget
         max_allowed_reasoning = (
             total_budget - answer_budget - total_reasoning_tokens_used
         )
         if max_allowed_reasoning <= 0:
-            # No more room for reasoning, force stop
             s += closing_sequence
             break
 
@@ -94,9 +69,7 @@ def run_thinkbrake_step(
         remaining_tokens -= tokens_generated
         total_reasoning_tokens_used += tokens_generated
 
-        if (
-            original_token == eot_token
-        ):  # Model generated the [END_OF_THINK] token explicitly
+        if original_token == eot_token:
             s += eot_token
             break
 
@@ -107,10 +80,7 @@ def run_thinkbrake_step(
             s += closing_sequence
             break
 
-        # Speculatively fork to check probabilities
         forks = s.fork(2)
-
-        # Branch 1: Continue with original token
         forks[0] += original_token
         forks[0] += sgl.gen(
             name="check_next_token",
@@ -131,7 +101,6 @@ def run_thinkbrake_step(
             **probe_sampling_params,
         )
 
-        # Compare logprobs
         next_meta = forks[0].get_meta_info("check_next_token")
         next_tokens = next_meta.get("output_token_logprobs")
         top_token_logprob, _, _ = next_tokens[-1]
@@ -140,7 +109,6 @@ def run_thinkbrake_step(
         eot_tokens = eot_meta.get("input_token_logprobs")
         eot_logprob, _, _ = eot_tokens[-1]
 
-        # Decision logic for braking
         if top_token_logprob - eot_logprob <= threshold:
             if suffix_token:
                 remaining_tokens -= 1
@@ -151,7 +119,6 @@ def run_thinkbrake_step(
         else:
             s += original_token
 
-    # Generate final answer with remaining budget
     remaining_total_budget = total_budget - total_reasoning_tokens_used
     effective_answer_budget = (
         min(answer_budget, remaining_total_budget) if remaining_total_budget > 0 else 1
@@ -257,7 +224,6 @@ class BaseHandler:
 
         loop = asyncio.get_running_loop()
 
-        # Cap max_tokens to max_total_tokens if set
         effective_max_tokens = max_tokens
         if self.max_total_tokens is not None and max_tokens is not None:
             effective_max_tokens = min(max_tokens, self.max_total_tokens)
@@ -284,7 +250,6 @@ class BaseHandler:
     ) -> dict:
         loop = asyncio.get_running_loop()
 
-        # Cap total token budget to max_total_tokens if set
         effective_reasoning_budget = reasoning_tokens_budget
         effective_answer_budget = answer_tokens_budget
         if self.max_total_tokens is not None:
@@ -314,7 +279,6 @@ class BaseHandler:
             state = await loop.run_in_executor(None, _run_sync_rollout)
             return self._postprocess_response(state)
 
-        # Case 2: Threshold -> ThinkBrake generation
         input_params = {
             "prompt": self._format_prompt(entry),
             "threshold": threshold,
@@ -353,31 +317,40 @@ class BaseHandler:
 
 
 class DeepSeekHandler(BaseHandler):
-    """Handler for DeepSeek R1/Distill models."""
-
     def __init__(self, pretrained_model_name_or_path: str):
         super().__init__(pretrained_model_name_or_path)
-        self.eos_token = "<｜end of sentence｜>"
+        self.eos_token = "<｜end▁of▁sentence｜>"
         self.prefix_token = ".\n"
         self.suffix_token = "\n\n"
         self.eot_token = "</think>"
         self.bot_token = "<think>"
-        self.sampling_params = {
-            "temperature": 0.6,
-        }
+        self.sampling_params = {"temperature": 0.6}
 
-    def _format_prompt(self, entry: dict) -> str:
+    def _format_prompt(self, entry: dict, function: list[object]) -> str:
         problem = entry["problem"]
         category = entry["category"]
         assistant = entry.get("assistant", None)
 
-        formatted_prompt = f"<｜begin of sentence｜><｜User｜>{problem}\n\n"
-
         if category == "math":
+            formatted_prompt = f"<｜begin▁of▁sentence｜><｜User｜>{problem}\n\n"
             formatted_prompt += "Please reason step by step, and put your final answer within \\boxed{}."
+        elif category == "tool":
+            formatted_prompt = (
+                "<｜begin▁of▁sentence｜>You are an expert in composing functions.\n"
+                "You are given a question and a set of possible functions. Based on the question, you will need to make one or more function/tool calls to achieve the purpose. If none of the functions can be used, point it out. If the given question lacks the parameters required by the function, also point it out.\n\n"
+                "You should only return the function calls in your response.\n\n"
+                "If you decide to invoke any of the function(s), you MUST put it in the format of [func_name1(params_name1=params_value1, params_name2=params_value2...), func_name2(params)].  You SHOULD NOT include any other text in the response.\n\n"
+                "Here is a list of functions in JSON format that you can invoke.\n"
+                f"{json.dumps(function, indent=4)}"
+            )
+
+            for message in messages:
+                if message["role"] == "system":
+                    formatted_prompt += "\n\n" + message["content"]
+                elif message["role"] == "user":
+                    formatted_prompt += "\n\n" + message["content"]
 
         formatted_prompt += f"<｜Assistant｜><think>\n"
-
         if assistant:
             formatted_prompt += assistant
 
@@ -385,8 +358,6 @@ class DeepSeekHandler(BaseHandler):
 
 
 class Qwen3Handler(BaseHandler):
-    """Handler for Qwen3 models."""
-
     def __init__(
         self,
         pretrained_model_name_or_path: str,
@@ -408,15 +379,37 @@ class Qwen3Handler(BaseHandler):
         problem = entry["problem"]
         category = entry["category"]
         assistant = entry.get("assistant", None)
-
-        formatted_prompt = f"<|im_start|>user\n{problem}\n\n"
+        function = entry.get("function", [])
 
         if category == "math":
-            formatted_prompt += "Please reason step by step, and put your final answer within \\boxed{}."
+            formatted_prompt = f"<|im_start|>user\n{problem}\n\n"
+            formatted_prompt += "Please reason step by step, and put your final answer within \\boxed{}.<|im_end|>\n"
         elif category == "general":
-            formatted_prompt += 'Please show your choice in the answer field with only the choice letter, e.g., "answer": "C".'
+            formatted_prompt = f"<|im_start|>user\n{problem}\n\n"
+            formatted_prompt += 'Please show your choice in the answer field with only the choice letter, e.g., "answer": "C".<|im_end|>\n'
+        elif category == "tool":
+            assert len(function) > 0
 
-        formatted_prompt += "<|im_end|>\n"
+            formatted_prompt = "<|im_start|>system\n"
+            if problem[0]["role"] == "system":
+                formatted_prompt += problem[0]["content"] + "\n\n"
+
+            formatted_prompt += "# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>"
+
+            for tool in function:
+                formatted_prompt += f"\n{json.dumps(tool)}"
+
+            formatted_prompt += '\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{"name": <function-name>, "arguments": <args-json-object>}\n</tool_call><|im_end|>\n'
+
+            for idx, message in enumerate(problem):
+                role = message["role"]
+                content = message["content"]
+
+                if role == "system" and idx == 0:
+                    continue
+
+                formatted_prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
+
         formatted_prompt += f"<|im_start|>assistant\n<think>\n"
 
         if assistant:
@@ -426,8 +419,6 @@ class Qwen3Handler(BaseHandler):
 
 
 class Phi4Handler(BaseHandler):
-    """Handler for Phi-4 models (Microsoft)."""
-
     def __init__(
         self,
         pretrained_model_name_or_path: str,
@@ -446,6 +437,8 @@ class Phi4Handler(BaseHandler):
 
     def _format_prompt(self, entry: dict) -> str:
         problem = entry["problem"]
+        category = entry["category"]
+        function = entry.get("function", [])
 
         system_prompt = (
             "You are Phi, a language model trained by Microsoft to help users. "
@@ -463,40 +456,40 @@ class Phi4Handler(BaseHandler):
             "and concise and detail necessary steps needed to reach the conclusion. Now, try to solve the following question through the above guidelines:"
         )
 
-        user_content = problem
-        formatted_prompt = "<|im_start|>system<|im_sep|>" + system_prompt + "<|im_end|>"
-        formatted_prompt += "<|im_start|>user<|im_sep|>" + user_content + "<|im_end|>"
+        formatted_prompt = ""
+
+        if category == "tool":
+            tool_definitions = (
+                "You are an expert in composing functions.\n"
+                "You are given a question and a set of possible functions. Based on the question, you will need to make one or more function/tool calls to achieve the purpose. If none of the functions can be used, point it out. If the given question lacks the parameters required by the function, also point it out.\n\n"
+                "You should only return the function calls in your response.\n\n"
+                "If you decide to invoke any of the function(s), you MUST put it in the format of [func_name1(params_name1=params_value1, params_name2=params_value2...), func_name2(params)].  You SHOULD NOT include any other text in the response.\n\n"
+                "Here is a list of functions in JSON format that you can invoke.\n"
+                f"{json.dumps(function, indent=4)}"
+            )
+
+            base_system_content = system_prompt + "\n\n" + tool_definitions
+            system_message_processed = False
+            for message in problem:
+                if message["role"] == "system":
+                    content = base_system_content + "\n\n" + message["content"]
+                    formatted_prompt += (
+                        f"<|im_start|>system<|im_sep|>{content}<|im_end|>"
+                    )
+                    system_message_processed = True
+                else:
+                    formatted_prompt += f"<|im_start|>{message['role']}<|im_sep|>{message['content']}<|im_end|>"
+
+            if not system_message_processed:
+                formatted_prompt = (
+                    f"<|im_start|>system<|im_sep|>{base_system_content}<|im_end|>"
+                    + formatted_prompt
+                )
+        else:
+            formatted_prompt = (
+                "<|im_start|>system<|im_sep|>" + system_prompt + "<|im_end|>"
+            )
+            formatted_prompt += f"<|im_start|>user<|im_sep|>{problem}<|im_end|>"
+
         formatted_prompt += "<|im_start|>assistant<|im_sep|><think>"
-
         return formatted_prompt
-
-
-# class GptOssHandler(BaseHandler):
-#     """Handler for GPT-OSS (example) models."""
-
-#     def __init__(self, pretrained_model_name_or_path: str):
-#         super().__init__(pretrained_model_name_or_path)
-#         self.eos_token = "<|return|>"
-#         self.prefix_token = "."
-#         self.suffix_token = ""
-#         self.eot_token = "<|end|>"
-#         self.sampling_params = {}
-
-#         self.current_date = datetime.now().strftime("%Y-%m-%d")
-#         self.reasoning_level = "high"
-
-#     def _format_prompt(self, entry: dict) -> str:
-#         problem = entry["problem"]
-
-#         formatted_prompt = f"""<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.
-# Knowledge cutoff: 2024-06
-# Current date: {self.current_date}
-
-# Reasoning: {self.reasoning_level}
-
-# # Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>"""
-
-#         formatted_prompt += f"<|start|>user<|message|>{problem}<|end|>"
-#         formatted_prompt += "<|start|>assistant<|channel|>analysis<|message|>"
-
-#         return formatted_prompt

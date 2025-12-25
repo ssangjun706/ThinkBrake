@@ -28,12 +28,6 @@ async def _process_entry_async(
     answer_tokens_budget: Optional[int],
     sem: asyncio.Semaphore,
 ) -> dict:
-    """
-    Process a single entry asynchronously.
-
-    Acquires a semaphore to limit the number of concurrent requests allowed to be
-    in-flight at the application level, although the backend might handle more.
-    """
     async with sem:
         result = await handler.inference_async(
             entry,
@@ -46,17 +40,6 @@ async def _process_entry_async(
 
 
 async def _generate_results_async(args, entries: List[dict]) -> None:
-    """
-    Main async generation loop.
-
-    1. Spins up the SGLang local server.
-    2. Manages a dependency graph of test cases (some cases depend on others).
-    3. Submits tasks to the asyncio loop with a semaphore to control concurrency.
-    4. Writes results to disk in a background thread.
-    """
-    # Adjust the default thread pool executor to handle the concurrency.
-    # SGLang's Python client uses threads internally (via run_in_executor in our handler).
-    # We ensure the pool is large enough to avoid starvation.
     loop = asyncio.get_running_loop()
     pool_size = args.num_workers + 4
     loop.set_default_executor(ThreadPoolExecutor(max_workers=pool_size))
@@ -102,7 +85,6 @@ async def _generate_results_async(args, entries: List[dict]) -> None:
 
         id_to_entry = {entry["id"]: entry for entry in entries}
 
-        # Queue of tasks ready to be processed (no remaining dependencies)
         ready_queue = deque(
             [
                 entry_id
@@ -120,12 +102,9 @@ async def _generate_results_async(args, entries: List[dict]) -> None:
         ) as pbar:
 
             while ready_queue or in_flight:
-                # Submit ready tasks
                 while ready_queue:
                     entry_id = ready_queue.popleft()
                     entry = id_to_entry[entry_id]
-
-                    # Create async task
                     task = asyncio.create_task(
                         _process_entry_async(
                             handler,

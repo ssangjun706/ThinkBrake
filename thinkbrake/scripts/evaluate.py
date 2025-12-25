@@ -22,31 +22,32 @@ logging.basicConfig(
 
 
 def _evaluate_jsonl_file(file_path: str, sub_category: str = None) -> dict:
-    """
-    Evaluates a single JSONL file, calculating accuracy and token usage.
-    Supports both math (using math_verify) and general multiple choice tasks.
-    """
     results = []
     correct_count = 0
     total_count = 0
     total_tokens = 0
 
     parent_category = get_parent_category(sub_category) if sub_category else None
-    is_multiple_choice = parent_category == "general"
 
     with open(file_path, "r", encoding="utf-8") as f:
         try:
             for line in f:
                 item = json.loads(line.strip())
 
-                if is_multiple_choice:
+                if parent_category == "general":
                     ground_truth = item["answer"]
                     predicted = extract_multiple_choice_answer(item["response"])
                     is_correct = verify_multiple_choice(ground_truth, predicted)
-                else:
+                elif parent_category == "math":
                     ground_truth = parse(f"${item['answer']}$")
                     predicted = parse(item["response"])
                     is_correct = verify(ground_truth, predicted)
+                elif parent_category == "tool":
+                    pass
+                else:
+                    assert (
+                        ValueError
+                    ), f"Unknown parent category found: {parent_category}"
 
                 if is_correct:
                     correct_count += 1

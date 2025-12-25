@@ -22,7 +22,6 @@ from thinkbrake.func.utils import (
     get_test_case_id,
     get_test_categories,
     load_file,
-    sort_key,
     split_sentence,
 )
 
@@ -48,18 +47,8 @@ def save_result(
         file_entries.setdefault(file_path, []).append(entry)
 
     for file_path, entries in file_entries.items():
-        existing_entries = {}
-        if file_path.exists():
-            existing_entries = {
-                get_test_case_id(entry): entry for entry in load_file(file_path)
-            }
-
-        for entry in entries:
-            existing_entries[get_test_case_id(entry)] = entry
-
-        sorted_entries = sorted(existing_entries.values(), key=sort_key)
-        with open(file_path, "w") as f:
-            for entry in sorted_entries:
+        with open(file_path, "a") as f:
+            for entry in entries:
                 content = json.dumps(entry) + "\n"
                 f.write(content)
             f.flush()

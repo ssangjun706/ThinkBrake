@@ -147,9 +147,7 @@ def _evaluate_jsonl_file(file_path: str, sub_category: str = None) -> dict:
     total_count = 0
     total_tokens = 0
 
-    # Determine if this is a multiple choice (general) category
     parent_category = get_parent_category(sub_category) if sub_category else None
-    is_multiple_choice = parent_category == "general"
 
     with open(file_path, "r", encoding="utf-8") as f:
 
@@ -157,16 +155,18 @@ def _evaluate_jsonl_file(file_path: str, sub_category: str = None) -> dict:
             for line in f:
                 item = json.loads(line.strip())
 
-                if is_multiple_choice:
-                    # Multiple choice evaluation (GPQA, MMLU, etc.)
+                if parent_category == "general":
                     ground_truth = item["answer"]
                     predicted = extract_multiple_choice_answer(item["response"])
                     is_correct = verify_multiple_choice(ground_truth, predicted)
-                else:
-                    # Math evaluation using math_verify
+                elif parent_category == "math":
                     ground_truth = parse(f"${item['answer']}$")
                     predicted = parse(item["response"])
                     is_correct = verify(ground_truth, predicted)
+                elif parent_category == "tool":
+                    pass
+                else:
+                    raise ValueError, f"Unknown parent category found: {parent_category}"
 
                 if is_correct:
                     correct_count += 1
@@ -198,9 +198,6 @@ def _evaluate_jsonl_file(file_path: str, sub_category: str = None) -> dict:
 
 
 def _evaluate_model_results(model_path: str) -> dict:
-    """
-    Evaluate all results for a model.
-    """
     model_path = Path(model_path)
     all_results = {}
 

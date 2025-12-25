@@ -48,33 +48,20 @@ def save_result(
         file_entries.setdefault(file_path, []).append(entry)
 
     for file_path, entries in file_entries.items():
+        existing_entries = {}
+        if file_path.exists():
+            existing_entries = {
+                get_test_case_id(entry): entry for entry in load_file(file_path)
+            }
+
+        for entry in entries:
+            existing_entries[get_test_case_id(entry)] = entry
+
+        sorted_entries = sorted(existing_entries.values(), key=sort_key)
         with open(file_path, "w") as f:
-            for entry in entries:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            f.flush()
-
-
-def sort_entry(model: str, categories: list[str]):
-    model_dir = RESULT_DIR / model.replace("/", "_")
-
-    file_entries = set()
-    for category in categories:
-        category_dir = model_dir / get_parent_category(category) / ORACLE_PREFIX
-
-        for file_path in category_dir.glob("*.jsonl"):
-            file_entries.add(file_path)
-
-    for file_path in file_entries:
-        if not file_path.exists():
-            continue
-
-        entries = load_file(file_path)
-        entries = {get_test_case_id(entry): entry for entry in entries}
-        entries = sorted(entries.values(), key=sort_key)
-
-        with open(file_path, "w") as f:
-            for entry in entries:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            for entry in sorted_entries:
+                content = json.dumps(entry) + "\n"
+                f.write(content)
             f.flush()
 
 
@@ -240,8 +227,6 @@ def main(args):
         logging.info(f"Collected {len(test_entries)} test case(s) for generation")
 
     asyncio.run(_generate_results_async(args, entries=test_entries, handler=handler))
-    logging.info("All sample generation finished. Sorting results...")
-    sort_entry(args.model, all_categories)
 
 
 def parse_args():

@@ -4,16 +4,15 @@ import logging
 import queue
 import threading
 import asyncio
-from collections import defaultdict, deque
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional, Union
+from typing import List, Union
 
 from tqdm import tqdm
 from thinkbrake.func.constants import (
     ORACLE_PREFIX,
     RESULT_DIR,
     ROLLOUT_PREFIX,
-    THINKBRAKE_PREFIX,
 )
 from thinkbrake.func.handler import BaseHandler
 from thinkbrake.func.utils import (
@@ -28,6 +27,57 @@ from thinkbrake.func.utils import (
 )
 
 
+def save_result(
+    model: str,
+    result: Union[dict, list[dict]],
+):
+    model_result_dir = RESULT_DIR / model.replace("/", "_")
+
+    if isinstance(result, dict):
+        result = [result]
+
+    file_entries = {}
+    for entry in result:
+        test_category = entry["id"].split("_")[0]
+        group_dir_path = (
+            model_result_dir / get_parent_category(test_category) / ORACLE_PREFIX
+        )
+        group_dir_path.mkdir(parents=True, exist_ok=True)
+
+        file_path = group_dir_path / f"{test_category}_result.jsonl"
+        file_entries.setdefault(file_path, []).append(entry)
+
+    for file_path, entries in file_entries.items():
+        with open(file_path, "w") as f:
+            for entry in entries:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            f.flush()
+
+
+def sort_entry(model: str, categories: list[str]):
+    model_dir = RESULT_DIR / model.replace("/", "_")
+
+    file_entries = set()
+    for category in categories:
+        category_dir = model_dir / get_parent_category(category) / ORACLE_PREFIX
+
+        for file_path in category_dir.glob("*.jsonl"):
+            file_entries.add(file_path)
+
+    for file_path in file_entries:
+        if not file_path.exists():
+            continue
+
+        entries = load_file(file_path)
+        entries = {get_test_case_id(entry): entry for entry in entries}
+        entries = sorted(entries.values(), key=sort_key)
+
+        with open(file_path, "w") as f:
+            for entry in entries:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            f.flush()
+
+
 async def _process_entry_async(
     handler: BaseHandler,
     entry: dict,
@@ -37,44 +87,6 @@ async def _process_entry_async(
         result = await handler.inference_oracle(entry)
 
     return {**entry, **result}
-
-
-def save_result(
-    model: str,
-    result: Union[dict, list[dict]],
-):
-    model_name = model.replace("/", "_")
-    model_result_dir = RESULT_DIR / model_name
-
-    if isinstance(result, dict):
-        result = [result]
-
-    file_entries = {}
-    for entry in result:
-        test_category = entry["id"].split("_")[0]
-        group_dir_name = get_parent_category(test_category)
-        group_dir_path = model_result_dir / group_dir_name / ORACLE_PREFIX
-        group_dir_path.mkdir(parents=True, exist_ok=True)
-
-        file_path = group_dir_path / f"{test_category}_result.jsonl"
-        file_entries.setdefault(file_path, []).append(entry)
-
-    for file_path, entries in file_entries.items():
-        existing_entries = {}
-        if file_path.exists():
-            existing_entries = {
-                get_test_case_id(entry): entry for entry in load_file(file_path)
-            }
-
-        for entry in entries:
-            existing_entries[get_test_case_id(entry)] = entry
-
-        sorted_entries = sorted(existing_entries.values(), key=sort_key)
-        with open(file_path, "w") as f:
-            for entry in sorted_entries:
-                content = json.dumps(entry) + "\n"
-                f.write(content)
-            f.flush()
 
 
 async def _generate_results_async(
@@ -100,18 +112,16 @@ async def _generate_results_async(
             item = write_queue.get()
             if item is None:
                 break
+
             save_result(args.model, item)
             write_queue.task_done()
 
     writer_thread = threading.Thread(target=_writer, daemon=True)
     writer_thread.start()
 
-    def _get_id(entry: dict) -> str:
-        return f"{entry["id"]}_{entry["sentence_idx"]}"
-
     try:
-        id_to_entry = {_get_id(entry): entry for entry in entries}
-        ready_queue = deque([_get_id(entry) for entry in entries])
+        id_to_entry = {get_test_case_id(entry): entry for entry in entries}
+        ready_queue = deque([get_test_case_id(entry) for entry in entries])
         in_flight = set()
         sem = asyncio.Semaphore(num_workers)
 
@@ -155,6 +165,24 @@ async def _generate_results_async(
         handler.shutdown_local_server()
 
 
+def get_oracle_entries_involved(
+    model: str,
+    category: str,
+) -> list[dict]:
+    model_dir = RESULT_DIR / model.replace("/", "_")
+    category_dir = model_dir / get_parent_category(category) / ORACLE_PREFIX
+    file_path = category_dir / f"{category}_result.jsonl"
+
+    if not file_path.exists():
+        return []
+
+    test_entries = []
+    with open(file_path, "r") as f:
+        test_entries = [json.loads(line.strip()) for line in f]
+
+    return test_entries
+
+
 def collect_rollout_cases(
     model: str,
     categories: list[str],
@@ -165,54 +193,33 @@ def collect_rollout_cases(
 
     for category in categories:
         parent_category = get_parent_category(category)
-        model_escaped = model.replace("/", "_")
-        file_path = RESULT_DIR / model_escaped / parent_category / ROLLOUT_PREFIX
-        file_name = file_path / f"{category}_result.jsonl"
+        model_dir = RESULT_DIR / model.replace("/", "_")
+        category_dir = model_dir / parent_category / ROLLOUT_PREFIX
+        file_path = category_dir / f"{category}_result.jsonl"
 
-        existing_ids = []
-        existing_ids = [
-            get_test_case_id(entry)
-            for entry in get_rollout_entries_involved(
-                model,
-                category,
-            )
-        ]
+        existing_entries = get_oracle_entries_involved(model, category)
+        existing_ids = [get_test_case_id(entry) for entry in existing_entries]
 
-        entries = load_file(file_name)
-        splitted_entries = split_sentence(
-            entries,
+        entries = split_sentence(
+            load_file(file_path),
             prefix=prefix,
             eot_token=eot_token,
         )
 
-        data.extend(
-            [
-                entry
-                for entry in splitted_entries
-                if get_test_case_id(entry) not in existing_ids
-            ]
-        )
+        filtered_entries = [
+            entry for entry in entries if get_test_case_id(entry) not in existing_ids
+        ]
+
+        if len(filtered_entries) > 0:
+            logging.info(
+                f"Category {category}: {len(entries)} total entries, "
+                f"{len(existing_ids)} already processed, "
+                f"{len(filtered_entries)} remaining to process"
+            )
+
+        data.extend(filtered_entries)
 
     return data
-
-
-def get_rollout_entries_involved(
-    model: str,
-    category: str,
-) -> set[str]:
-    model_escaped = model.replace("/", "_")
-    parent_category = get_parent_category(category)
-    group_dir = RESULT_DIR / model_escaped / parent_category / ORACLE_PREFIX
-    file_path = group_dir / f"{category}_result.jsonl"
-
-    if not file_path.exists():
-        return set()
-
-    test_entries = []
-    with open(file_path, "r") as f:
-        test_entries = [json.loads(line.strip()) for line in f]
-
-    return test_entries
 
 
 def main(args):
@@ -233,6 +240,8 @@ def main(args):
         logging.info(f"Collected {len(test_entries)} test case(s) for generation")
 
     asyncio.run(_generate_results_async(args, entries=test_entries, handler=handler))
+    logging.info("All sample generation finished. Sorting results...")
+    sort_entry(args.model, all_categories)
 
 
 def parse_args():

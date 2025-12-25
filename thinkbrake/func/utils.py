@@ -161,15 +161,6 @@ def get_models(models: str) -> list[str]:
 
 
 def get_thresholds(thresholds: Optional[str]) -> list[Optional[float]]:
-    """
-    Parses threshold string (comma-separated) into a list of float values.
-
-    Args:
-        thresholds: Comma-separated threshold values (e.g., "0.1,0.5,0.9") or None.
-
-    Returns:
-        List of threshold values. Returns [None] if input is None.
-    """
     if thresholds is None:
         return [None]
 
@@ -190,10 +181,6 @@ def get_test_entries_involved(
     prefix: str,
     threshold: Optional[float] = None,
 ) -> Set[str]:
-    """
-    Retrieves test entries that have already been processed for a given model/category configuration.
-    Used for resuming generation.
-    """
     model_name = model.replace("/", "_")
     parent_category = get_parent_category(category)
     group_dir = RESULT_DIR / model_name / parent_category / prefix
@@ -255,12 +242,8 @@ def save_result(
     prefix: str,
     threshold: Optional[float] = None,
 ):
-    """
-    Saves generation results to JSONL files.
-    Appends new results to existing files and sorts them.
-    """
-    model_name = model.replace("/", "_")
-    model_result_dir = RESULT_DIR / model_name
+    model_escaped = model.replace("/", "_")
+    model_result_dir = RESULT_DIR / model_escaped
 
     if isinstance(result, dict):
         result = [result]

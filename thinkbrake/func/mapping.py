@@ -6,12 +6,12 @@ from thinkbrake.func.handler import (
 
 MODEL_MAPPING = {
     "Qwen/Qwen3-4B-Thinking-2507": Qwen3Handler,
-    # "deepseek-ai/DeepSeek-R1-Distill-Llama-8B": DeepSeekHandler,
-    # "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B": DeepSeekHandler,
+    "deepseek-ai/DeepSeek-R1-Distill-Llama-8B": DeepSeekHandler,
+    "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B": DeepSeekHandler,
     "Qwen/Qwen3-4B": Qwen3Handler,
     "Qwen/Qwen3-14B": Qwen3Handler,
     "Qwen/Qwen3-32B": Qwen3Handler,
-    # "microsoft/phi-4-reasoning": Phi4Handler,
+    "microsoft/phi-4-reasoning": Phi4Handler,
 }
 
 CATEGORY_MAPPING = {

@@ -4,7 +4,7 @@ export THINKBRAKE_ROOT=/home/work/ThinkBrake
 
 source .venv/bin/activate
 
-MODEL="Qwen/Qwen3-4B-Thinking-2507"
+MODEL="all"
 CATEGORY="tool"
 REASONING_TOKENS_BUDGET=16384
 ANSWER_TOKENS_BUDGET=4096

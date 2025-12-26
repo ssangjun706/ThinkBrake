@@ -326,10 +326,11 @@ class DeepSeekHandler(BaseHandler):
         self.bot_token = "<think>"
         self.sampling_params = {"temperature": 0.6}
 
-    def _format_prompt(self, entry: dict, function: list[object]) -> str:
+    def _format_prompt(self, entry: dict) -> str:
         problem = entry["problem"]
         category = entry["category"]
         assistant = entry.get("assistant", None)
+        function = entry.get("function", [])
 
         if category == "math":
             formatted_prompt = f"<｜begin▁of▁sentence｜><｜User｜>{problem}\n\n"
@@ -344,7 +345,7 @@ class DeepSeekHandler(BaseHandler):
                 f"{json.dumps(function, indent=4)}"
             )
 
-            for message in messages:
+            for message in problem:
                 if message["role"] == "system":
                     formatted_prompt += "\n\n" + message["content"]
                 elif message["role"] == "user":

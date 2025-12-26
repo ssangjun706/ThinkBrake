@@ -1,40 +1,271 @@
 import json
 import random
 import re
+import glob
+import ast
 
-from typing import Optional, Union, Set
-from thinkbrake.func.constants import DATA_DIR, RESULT_DIR, ROLLOUT_PREFIX
+from typing import Optional, Union, Set, List, Dict, Any
+from thinkbrake.func.constants import DATA_DIR, RESULT_DIR
 from thinkbrake.func.mapping import MODEL_MAPPING, CATEGORY_MAPPING
 from thinkbrake.func.handler import BaseHandler
 
+BFCL_GROUND_TRUTH = {}
+
+
+def load_bfcl_ground_truth():
+    global BFCL_GROUND_TRUTH
+    if BFCL_GROUND_TRUTH:
+        return
+
+    gt_dir = DATA_DIR / "tool" / "possible_answer"
+    if not gt_dir.exists():
+        print(f"Ground truth directory not found: {gt_dir}")
+        return
+
+    files = glob.glob(str(gt_dir / "*.jsonl"))
+
+    for file_path in files:
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        if "id" in entry and "ground_truth" in entry:
+                            BFCL_GROUND_TRUTH[entry["id"]] = entry
+                    except json.JSONDecodeError:
+                        pass
+        except Exception as e:
+            print(f"Error reading ground truth file {file_path}: {e}")
+
+
+def _ast_get_name(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    elif isinstance(node, ast.Attribute):
+        return _ast_get_name(node.value) + "." + node.attr
+    return str(node)
+
+
+def _ast_resolve(node):
+    if isinstance(node, ast.Call):
+        func_name = _ast_get_name(node.func)
+        args_dict = {}
+        for keyword in node.keywords:
+            args_dict[keyword.arg] = _ast_resolve(keyword.value)
+        return {func_name: args_dict}
+    elif isinstance(node, ast.List):
+        return [_ast_resolve(e) for e in node.elts]
+    elif isinstance(node, ast.Dict):
+        return {
+            _ast_resolve(k): _ast_resolve(v) for k, v in zip(node.keys, node.values)
+        }
+    elif isinstance(node, ast.Constant):
+        return node.value
+    elif isinstance(node, ast.Name):
+        return node.id
+    elif isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        operand = _ast_resolve(node.operand)
+        if isinstance(operand, (int, float)):
+            return -operand
+
+    try:
+        return ast.literal_eval(node)
+    except:
+        return None
+
+
+def qwen_parse(input_str: Union[str, List, Dict]) -> List[Dict]:
+    if isinstance(input_str, (list, dict)):
+        return input_str if isinstance(input_str, list) else [input_str]
+
+    results = []
+    matches = re.findall(r"<tool_call>(.*?)</tool_call>", input_str, re.DOTALL)
+
+    if matches:
+        for match in matches:
+            try:
+                json_str = match.strip()
+                parsed = json.loads(json_str)
+                results.append(parsed)
+            except json.JSONDecodeError:
+                try:
+                    parsed = ast.literal_eval(json_str)
+                    results.append(parsed)
+                except:
+                    pass
+    else:
+        try:
+            parsed = json.loads(input_str)
+            if isinstance(parsed, list):
+                results = parsed
+            elif isinstance(parsed, dict):
+                results = [parsed]
+        except:
+            pass
+
+    return results
+
+
+def default_parse(input_str: Union[str, List, Dict]) -> List[Dict]:
+    if isinstance(input_str, (list, dict)):
+        return input_str if isinstance(input_str, list) else [input_str]
+
+    input_str = input_str.strip()
+    input_str = input_str.strip("`").strip()
+    if input_str.startswith("json\n"):
+        input_str = input_str[5:]
+    elif input_str.startswith("python\n"):
+        input_str = input_str[7:]
+
+    results = []
+    try:
+        if not input_str.startswith("["):
+            input_str = "[" + input_str
+        if not input_str.endswith("]"):
+            input_str = input_str + "]"
+
+        tree = ast.parse(input_str, mode="eval")
+        evaluated = _ast_resolve(tree.body)
+
+        if isinstance(evaluated, list):
+            results = evaluated
+        elif isinstance(evaluated, dict):
+            results = [evaluated]
+
+    except Exception:
+        # Fallback to JSON
+        try:
+            parsed = json.loads(input_str)
+            if isinstance(parsed, list):
+                results = parsed
+            elif isinstance(parsed, dict):
+                results = [parsed]
+        except:
+            pass
+
+    return results
+
+
+def restructure_model_output(output):
+    if not output:
+        return output
+
+    standardized = []
+    for item in output:
+        if isinstance(item, dict):
+            if "name" in item and "arguments" in item and len(item) == 2:
+                args = item["arguments"]
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except:
+                        pass
+                standardized.append({item["name"]: args})
+            else:
+                standardized.append(item)
+    return standardized
+
+
+def check_single_call(pred_name, pred_args, gt_item):
+    if pred_name not in gt_item:
+        return False
+
+    gt_args_constraints = gt_item[pred_name]
+
+    for arg, val in pred_args.items():
+        if isinstance(val, str):
+            val = val.strip()
+
+        if arg not in gt_args_constraints:
+            return False
+
+        valid_options = gt_args_constraints[arg]
+        if not isinstance(valid_options, list):
+            valid_options = [valid_options]
+
+        normalized_options = []
+        for opt in valid_options:
+            normalized_options.append(opt)
+            if isinstance(opt, (int, float)):
+                normalized_options.append(str(opt))
+
+        if val not in valid_options and str(val) not in [str(o) for o in valid_options]:
+            return False
+
+    if len(pred_args) != len(gt_args_constraints):
+        pass
+
+    return True
+
+
+def check_entry(prediction: List[Dict], ground_truth: List[Any]):
+    if not prediction and not ground_truth:
+        return True
+
+    if len(prediction) != len(ground_truth):
+        return False
+
+    match_count = 0
+    gt_copy = list(ground_truth)
+
+    for pred_item in prediction:
+        matched = False
+        if not isinstance(pred_item, dict):
+            continue
+
+        pred_func_name = list(pred_item.keys())[0]
+        pred_args = pred_item[pred_func_name]
+
+        for idx, gt_item in enumerate(gt_copy):
+            if check_single_call(pred_func_name, pred_args, gt_item):
+                matched = True
+                gt_copy.pop(idx)
+                break
+
+        if matched:
+            match_count += 1
+
+    return match_count == len(prediction) and len(gt_copy) == 0
+
+
+def evaluate_bfcl_entry(entry: dict) -> bool:
+    load_bfcl_ground_truth()
+
+    pid = entry.get("pid")
+    if pid not in BFCL_GROUND_TRUTH:
+        return False
+
+    gt_entry = BFCL_GROUND_TRUTH[pid]
+    gt_answer = gt_entry.get("ground_truth")
+    raw_result = entry.get("response")
+
+    if "<tool_call>" in raw_result:
+        parsed = qwen_parse(raw_result)
+    else:
+        parsed = default_parse(raw_result)
+
+    reconstructed = restructure_model_output(parsed)
+    result = check_entry(reconstructed, gt_answer)
+    return reconstructed, gt_answer, result
+
 
 def extract_multiple_choice_answer(response: str) -> str:
-    """
-    Extract the multiple choice answer (A, B, C, D, etc.) from the response text.
-    Uses common patterns found in model outputs for GPQA/MMLU benchmarks.
-    """
-    # Pattern priority: more explicit patterns first
     patterns = [
-        # JSON-style: "answer": "D" or **answer**: "D"
         r'["\*]*answer["\*]*\s*[:=]\s*["\']?([A-Da-d])["\']?',
-        # "The answer is D" or "Answer is D"
         r"(?:the\s+)?answer\s+is[:\s]*([A-Da-d])\b",
-        # "Final answer: D"
         r"final\s+answer[:\s]*([A-Da-d])\b",
-        # "Choice D" or "Option D"
         r"(?:choice|option)[:\s]*([A-Da-d])\b",
-        # Standalone letter at the end (e.g., "D" or "d")
         r"\b([A-Da-d])\s*$",
     ]
 
-    # Try each pattern
     for pattern in patterns:
         matches = re.findall(pattern, response, re.IGNORECASE)
         if matches:
-            # Return the last match (usually the final answer)
             return matches[-1].upper()
 
-    # Fallback: find the last standalone A/B/C/D in the response
     standalone_matches = re.findall(r"\b([A-Da-d])\b", response)
     if standalone_matches:
         return standalone_matches[-1].upper()
@@ -43,24 +274,12 @@ def extract_multiple_choice_answer(response: str) -> str:
 
 
 def verify_multiple_choice(ground_truth: str, predicted: str) -> bool:
-    """
-    Verify if the predicted multiple choice answer matches the ground truth.
-    """
     if not predicted:
         return False
     return ground_truth.upper().strip() == predicted.upper().strip()
 
 
 def get_handler(pretrained_model_name_or_path: str) -> BaseHandler:
-    """
-    Factory function to get the appropriate model handler.
-
-    Args:
-        pretrained_model_name_or_path: Name or path of the model.
-
-    Returns:
-        An instance of a BaseHandler subclass.
-    """
     handler_callable = MODEL_MAPPING[pretrained_model_name_or_path]
     handler: BaseHandler = handler_callable(
         pretrained_model_name_or_path=pretrained_model_name_or_path
@@ -77,11 +296,6 @@ def get_test_case_id(test_case: dict) -> str:
 
 
 def sort_key(item: dict) -> tuple:
-    """
-    Sort key function for test case ordering.
-
-    Sorts by ID number and then sentence ID.
-    """
     num = item["id"].split("_")[1]
 
     if num.isdigit():
@@ -92,9 +306,6 @@ def sort_key(item: dict) -> tuple:
 
 
 def load_file(file_path: str) -> list[dict]:
-    """
-    Loads a JSONL file into a list of dictionaries.
-    """
     try:
         data = []
         with open(file_path, "r") as f:
@@ -108,9 +319,6 @@ def load_file(file_path: str) -> list[dict]:
 
 
 def get_parent_category(sub_category: str) -> str:
-    """
-    Finds the parent category (e.g., 'math', 'general') for a given sub-category.
-    """
     parent_category = None
     for category in CATEGORY_MAPPING.keys():
         if sub_category in CATEGORY_MAPPING[category]:
@@ -121,9 +329,6 @@ def get_parent_category(sub_category: str) -> str:
 
 
 def get_test_categories(categories: str) -> list[str]:
-    """
-    Parses category string (comma-separated or 'all') into a list of sub-categories.
-    """
     if categories == "all":
         categories = list(CATEGORY_MAPPING.keys())
     else:
@@ -142,9 +347,6 @@ def get_test_categories(categories: str) -> list[str]:
 
 
 def get_models(models: str) -> list[str]:
-    """
-    Parses model string (comma-separated or 'all') into a list of model names.
-    """
     if models == "all":
         models = list(MODEL_MAPPING.keys())
     else:
@@ -207,10 +409,6 @@ def collect_test_cases(
     prefix: str,
     threshold: Optional[float] = None,
 ) -> list[dict]:
-    """
-    Collects test cases that need to be processed.
-    Filters out cases that have already been completed.
-    """
     data = []
 
     for category in categories:

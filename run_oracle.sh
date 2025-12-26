@@ -4,8 +4,8 @@ export THINKBRAKE_ROOT=/home/work/ThinkBrake
 
 source .venv/bin/activate
 
-MODEL="Qwen/Qwen3-4B-Thinking-2507"
-CATEGORY="aime2024"
+MODEL="all"
+CATEGORY="tool"
 NUM_WORKERS=16
 MAX_TOTAL_TOKENS=32768
 MEM_FRACTION_STATIC=0.8

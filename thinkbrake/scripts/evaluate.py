@@ -12,7 +12,9 @@ from thinkbrake.func.utils import (
     extract_multiple_choice_answer,
     get_test_categories,
     verify_multiple_choice,
+    evaluate_bfcl_entry,
 )
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,6 +35,7 @@ def _evaluate_jsonl_file(file_path: str, sub_category: str = None) -> dict:
         try:
             for line in f:
                 item = json.loads(line.strip())
+                is_correct = False
 
                 if parent_category == "general":
                     ground_truth = item["answer"]
@@ -43,11 +46,16 @@ def _evaluate_jsonl_file(file_path: str, sub_category: str = None) -> dict:
                     predicted = parse(item["response"])
                     is_correct = verify(ground_truth, predicted)
                 elif parent_category == "tool":
-                    pass
+                    if sub_category in ["bfcl-v1", "bfcl-v2"]:
+                        predicted, ground_truth, is_correct = evaluate_bfcl_entry(item)
+                    else:
+                        ground_truth = None
+                        predicted = None
+                        pass
                 else:
-                    assert (
-                        ValueError
-                    ), f"Unknown parent category found: {parent_category}"
+                    raise ValueError(
+                        f"Unknown parent category found: {parent_category}"
+                    )
 
                 if is_correct:
                     correct_count += 1
@@ -80,9 +88,6 @@ def _evaluate_jsonl_file(file_path: str, sub_category: str = None) -> dict:
 
 
 def _evaluate_model_results(model_path: str, categories: list[str]) -> dict:
-    """
-    Iterates through all result files for a model and evaluates them.
-    """
     model_path = Path(model_path)
     all_results = {}
 
@@ -90,13 +95,33 @@ def _evaluate_model_results(model_path: str, categories: list[str]) -> dict:
         return None
 
     for parent_category in model_path.iterdir():
-        target_dir = parent_category / THINKBRAKE_PREFIX
+        if not parent_category.is_dir():
+            continue
 
-        for threshold_dir in target_dir.iterdir():
-            threshold_value = threshold_dir.name.replace("threshold_", "")
-            for jsonl_file in threshold_dir.glob("*_result.jsonl"):
-                sub_category = jsonl_file.stem.replace("_result", "")
-                if sub_category not in categories:
+        target_dir = parent_category / THINKBRAKE_PREFIX
+        if not target_dir.exists():
+            continue
+
+        try:
+            threshold_dirs = sorted(
+                [d for d in target_dir.iterdir()],
+                key=lambda d: float(d.name.replace("threshold_", "")),
+            )
+        except ValueError:
+            threshold_dirs = sorted([d for d in target_dir.iterdir()])
+
+        relevant_categories = [
+            cat
+            for cat in categories
+            if get_parent_category(cat) == parent_category.name
+        ]
+
+        for sub_category in relevant_categories:
+            for threshold_dir in threshold_dirs:
+                threshold_value = threshold_dir.name.replace("threshold_", "")
+                jsonl_file = threshold_dir / f"{sub_category}_result.jsonl"
+
+                if not jsonl_file.exists():
                     continue
 
                 eval_result = _evaluate_jsonl_file(str(jsonl_file), sub_category)
@@ -125,39 +150,34 @@ def _evaluate_model_results(model_path: str, categories: list[str]) -> dict:
 
 
 def _generate_leaderboard_entry(model_path: str, categories: list[str]):
-    """
-    Generates a summary dictionary for the leaderboard.
-    """
     results = _evaluate_model_results(model_path, categories)
 
     if results is None:
         return None
 
-    leaderboard_entry = {}
-    for threshold in results.keys():
-        for category_key, stats in results[threshold].items():
-            leaderboard_entry.setdefault(threshold, {})
-            leaderboard_entry[threshold][category_key] = {
-                "total": stats["total"],
-                "correct": stats["correct"],
-                "accuracy": stats["accuracy"],
-                "avg_token_length": stats["avg_token_length"],
-            }
+    structured_entry = {}
+    for category_key, threshold_map in results.items():
+        for threshold_key, stats in threshold_map.items():
+            structured_entry.setdefault(category_key, {})
+            structured_entry[category_key][threshold_key] = stats
 
-    return leaderboard_entry
+    return structured_entry
 
 
 def _save_leaderboard_entry(model_name: str, entry: dict):
-    """
-    Saves the leaderboard entry to a JSON file.
-    """
     leaderboard_file = RESULT_DIR / f"leaderboard_{THINKBRAKE_PREFIX}.json"
+    leaderboard = {}
     if leaderboard_file.exists():
-        with open(leaderboard_file, "r", encoding="utf-8") as f:
-            leaderboard = json.load(f)
-            leaderboard.update({model_name: entry})
-    else:
-        leaderboard = {model_name: entry}
+        try:
+            with open(leaderboard_file, "r", encoding="utf-8") as f:
+                leaderboard = json.load(f)
+        except Exception:
+            pass
+
+    if model_name not in leaderboard:
+        leaderboard[model_name] = {}
+
+    leaderboard[model_name].update(entry)
 
     with open(leaderboard_file, "w", encoding="utf-8") as f:
         json.dump(leaderboard, f, indent=2, ensure_ascii=False)
@@ -173,10 +193,12 @@ def main(args):
             return
 
         logging.info(f"Evaluating the model {model}...")
-        model_name = model_path.name.replace("_", "/")
+
+        real_model_name = model
+
         entry = _generate_leaderboard_entry(str(model_path), categories)
         if entry:
-            _save_leaderboard_entry(model_name, entry)
+            _save_leaderboard_entry(real_model_name, entry)
 
 
 def parse_args():

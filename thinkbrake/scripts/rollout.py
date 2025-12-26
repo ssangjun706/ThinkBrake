@@ -1,8 +1,9 @@
-from collections import defaultdict, deque
-from concurrent.futures import ThreadPoolExecutor
-import json
 import logging
 import argparse
+import json
+
+from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import queue
 import threading
@@ -23,6 +24,7 @@ from thinkbrake.func.utils import (
     get_test_categories,
     extract_multiple_choice_answer,
     verify_multiple_choice,
+    evaluate_bfcl_entry,
 )
 
 
@@ -154,6 +156,7 @@ def _evaluate_jsonl_file(file_path: str, sub_category: str = None) -> dict:
         try:
             for line in f:
                 item = json.loads(line.strip())
+                is_correct = False
 
                 if parent_category == "general":
                     ground_truth = item["answer"]
@@ -164,9 +167,14 @@ def _evaluate_jsonl_file(file_path: str, sub_category: str = None) -> dict:
                     predicted = parse(item["response"])
                     is_correct = verify(ground_truth, predicted)
                 elif parent_category == "tool":
-                    pass
+                    if sub_category in ["bfcl-v1", "bfcl-v2"]:
+                        predicted, ground_truth, is_correct = evaluate_bfcl_entry(item)
+                    else:
+                        ground_truth = None
+                        predicted = None
+                        pass
                 else:
-                    raise ValueError, f"Unknown parent category found: {parent_category}"
+                    raise ValueError
 
                 if is_correct:
                     correct_count += 1
@@ -184,6 +192,7 @@ def _evaluate_jsonl_file(file_path: str, sub_category: str = None) -> dict:
                     }
                 )
         except Exception:
+            logging.error(f"Error evaluating the file {file_path}: {e}")
             return None
 
     accuracy = (correct_count / total_count * 100) if total_count > 0 else 0.0
@@ -197,7 +206,7 @@ def _evaluate_jsonl_file(file_path: str, sub_category: str = None) -> dict:
     }
 
 
-def _evaluate_model_results(model_path: str) -> dict:
+def _evaluate_model_results(model_path: str, categories: list[str]) -> dict:
     model_path = Path(model_path)
     all_results = {}
 
@@ -209,6 +218,9 @@ def _evaluate_model_results(model_path: str) -> dict:
 
         for jsonl_file in target_dir.glob("*_result.jsonl"):
             sub_category = jsonl_file.stem.replace("_result", "")
+            if sub_category not in categories:
+                continue
+
             eval_result = _evaluate_jsonl_file(str(jsonl_file), sub_category)
             all_results[sub_category] = {
                 "total": eval_result["total"],
@@ -227,8 +239,8 @@ def _evaluate_model_results(model_path: str) -> dict:
     return all_results
 
 
-def _generate_leaderboard_entry(model_path: str):
-    results = _evaluate_model_results(model_path)
+def _generate_leaderboard_entry(model_path: str, categories: list[str]):
+    results = _evaluate_model_results(model_path, categories)
 
     if results is None:
         return None
@@ -247,12 +259,18 @@ def _generate_leaderboard_entry(model_path: str):
 
 def _save_leaderboard_entry(model_name: str, entry: dict):
     leaderboard_file = RESULT_DIR / f"leaderboard_{ROLLOUT_PREFIX}.json"
+    leaderboard = {}
     if leaderboard_file.exists():
-        with open(leaderboard_file, "r", encoding="utf-8") as f:
-            leaderboard = json.load(f)
-            leaderboard.update({model_name: entry})
-    else:
-        leaderboard = {model_name: entry}
+        try:
+            with open(leaderboard_file, "r", encoding="utf-8") as f:
+                leaderboard = json.load(f)
+        except Exception as e:
+            logging.error(f"Error reading {leaderboard_file}: {e}")
+
+    if model_name not in leaderboard:
+        leaderboard[model_name] = {}
+
+    leaderboard[model_name].update(entry)
 
     with open(leaderboard_file, "w", encoding="utf-8") as f:
         json.dump(leaderboard, f, indent=2, ensure_ascii=False)
@@ -274,7 +292,6 @@ def main(args):
             logging.info("All test cases have been completed. Skipping execution")
         else:
             logging.info(f"Collected {len(test_entries)} test case(s) for generation")
-            # Use asyncio.run for async generation
             asyncio.run(_generate_results_async(args, model, entries=test_entries))
 
         logging.info(f"Evaluating the model {model}...")
@@ -283,7 +300,7 @@ def main(args):
         if not model_path.exists():
             continue
 
-        entry = _generate_leaderboard_entry(str(model_path))
+        entry = _generate_leaderboard_entry(str(model_path), all_categories)
         if entry:
             _save_leaderboard_entry(model_name, entry)
 

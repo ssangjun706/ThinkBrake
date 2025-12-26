@@ -209,7 +209,7 @@ class BaseHandler:
         meta_info = state.get_meta_info("final_answer")
         result_dict = {
             "entire_response": state.text(),
-            "response": state["final_answer"],
+            "response": state["final_answer"].split(self.eot_token)[-1],
             "token_length": meta_info["prompt_tokens"] + meta_info["completion_tokens"],
         }
         return result_dict

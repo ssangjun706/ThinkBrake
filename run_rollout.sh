@@ -5,7 +5,7 @@ export THINKBRAKE_ROOT=/home/work/ThinkBrake
 source .venv/bin/activate
 
 MODEL="all"
-CATEGORY="tool"
+CATEGORY="all"
 REASONING_TOKENS_BUDGET=16384
 ANSWER_TOKENS_BUDGET=4096
 NUM_WORKERS=16

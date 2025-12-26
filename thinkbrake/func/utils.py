@@ -136,17 +136,44 @@ def default_parse(input_str: Union[str, List, Dict]) -> List[Dict]:
             results = [evaluated]
 
     except Exception:
-        # Fallback to JSON
         try:
-            parsed = json.loads(input_str)
-            if isinstance(parsed, list):
-                results = parsed
-            elif isinstance(parsed, dict):
-                results = [parsed]
-        except:
-            pass
+            cleaned_str = input_str
+            if cleaned_str.startswith('["') and not cleaned_str.endswith('"]'):
+                cleaned_str = cleaned_str.replace('["', "[", 1)
 
-    return results
+            tree = ast.parse(cleaned_str, mode="eval")
+            evaluated = _ast_resolve(tree.body)
+
+            if isinstance(evaluated, list):
+                results = evaluated
+            elif isinstance(evaluated, dict):
+                results = [evaluated]
+        except Exception:
+            try:
+                parsed = json.loads(input_str)
+                if isinstance(parsed, list):
+                    results = parsed
+                elif isinstance(parsed, dict):
+                    results = [parsed]
+            except:
+                pass
+
+    final_results = []
+    for item in results:
+        if isinstance(item, str):
+            try:
+                tree = ast.parse(item, mode="eval")
+                resolved = _ast_resolve(tree.body)
+                if isinstance(resolved, dict):
+                    final_results.append(resolved)
+                else:
+                    final_results.append(item)
+            except:
+                final_results.append(item)
+        else:
+            final_results.append(item)
+
+    return final_results
 
 
 def restructure_model_output(output):

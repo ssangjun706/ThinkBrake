@@ -4,7 +4,7 @@ export THINKBRAKE_ROOT=/home/work/ThinkBrake
 
 source .venv/bin/activate
 
-MODEL="all"
+MODEL="microsoft/phi-4-reasoning"
 CATEGORY="tool"
 THRESHOLD="0.1,0.25,1.0,2.5"
 NUM_WORKERS=16

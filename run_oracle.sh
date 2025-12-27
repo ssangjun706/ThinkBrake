@@ -5,7 +5,7 @@ export THINKBRAKE_ROOT=/home/work/ThinkBrake
 source .venv/bin/activate
 
 MODEL="Qwen/Qwen3-4B-Thinking-2507"
-CATEGORY="omni-math"
+CATEGORY="math500"
 NUM_WORKERS=16
 MAX_TOTAL_TOKENS=32768
 MEM_FRACTION_STATIC=0.8

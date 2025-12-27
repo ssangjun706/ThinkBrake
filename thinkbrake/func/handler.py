@@ -350,6 +350,8 @@ class DeepSeekHandler(BaseHandler):
                     formatted_prompt += "\n\n" + message["content"]
                 elif message["role"] == "user":
                     formatted_prompt += "\n\n" + message["content"]
+        else:
+            formatted_prompt = f"<｜begin▁of▁sentence｜><｜User｜>{problem}\n\n"
 
         formatted_prompt += f"<｜Assistant｜><think>\n"
         if assistant:

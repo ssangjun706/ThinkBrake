@@ -3,42 +3,27 @@ import random
 import re
 import glob
 import ast
+import math
+from collections import defaultdict, Counter
 
 from typing import Optional, Union, Set, List, Dict, Any
 from thinkbrake.func.constants import DATA_DIR, RESULT_DIR
 from thinkbrake.func.mapping import MODEL_MAPPING, CATEGORY_MAPPING
 from thinkbrake.func.handler import BaseHandler
 
-BFCL_GROUND_TRUTH = {}
 
+def calculate_pass_at_k(n, c, k):
+    if n < k:
+        return 1.0 if c > 0 else 0.0
 
-def load_bfcl_ground_truth():
-    global BFCL_GROUND_TRUTH
-    if BFCL_GROUND_TRUTH:
-        return
+    if c == n:
+        return 1.0
 
-    gt_dir = DATA_DIR / "tool" / "possible_answer"
-    if not gt_dir.exists():
-        print(f"Ground truth directory not found: {gt_dir}")
-        return
-
-    files = glob.glob(str(gt_dir / "*.jsonl"))
-
-    for file_path in files:
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        entry = json.loads(line)
-                        if "id" in entry and "ground_truth" in entry:
-                            BFCL_GROUND_TRUTH[entry["id"]] = entry
-                    except json.JSONDecodeError:
-                        pass
-        except Exception as e:
-            print(f"Error reading ground truth file {file_path}: {e}")
+    try:
+        prob_fail = math.comb(n - c, k) / math.comb(n, k)
+        return 1.0 - prob_fail
+    except Exception:
+        return 0.0
 
 
 def _ast_get_name(node):
@@ -259,14 +244,12 @@ def check_entry(prediction: List[Dict], ground_truth: List[Any]):
 
 
 def evaluate_bfcl_entry(entry: dict) -> bool:
-    load_bfcl_ground_truth()
+    # Ground truth is now merged into answer field
+    gt_answer = entry.get("answer")
+    if gt_answer is None:
+        # Check alternative key if necessary, or fail
+        return False, None, False
 
-    pid = entry.get("pid")
-    if pid not in BFCL_GROUND_TRUTH:
-        return False
-
-    gt_entry = BFCL_GROUND_TRUTH[pid]
-    gt_answer = gt_entry.get("ground_truth")
     raw_result = entry.get("response")
 
     if "<tool_call>" in raw_result:
@@ -315,21 +298,19 @@ def get_handler(pretrained_model_name_or_path: str) -> BaseHandler:
 
 
 def get_test_case_id(test_case: dict) -> str:
-    test_case_id = f"id_{test_case["id"]}"
-    if "sentence_idx" in test_case:
-        test_case_id += f"_sentence_{test_case['sentence_idx']}"
-
-    if "trial" in test_case:
-        test_case_id += f"_trial_{test_case["trial"]}"
-
+    test_case_id = f"id_{test_case["id"]}_trial_{test_case["trial"]}"
     return test_case_id
 
 
 def sort_key(item: dict) -> tuple:
-    num = item["id"].split("_")[1]
-
-    if num.isdigit():
-        num = int(num)
+    try:
+        parts = item["id"].rsplit("_", 1)
+        if len(parts) == 2 and parts[1].isdigit():
+            num = int(parts[1])
+        else:
+            num = item["id"]
+    except Exception:
+        num = item["id"]
 
     sentence_id = item.get("sentence_idx", 0)
     trial = item.get("trial", 1)
@@ -554,3 +535,112 @@ def split_sentence(
             )
 
     return test_cases
+
+
+def calculate_pass_at_k(n, c, k):
+    """
+    Calculate pass@k.
+    n: total number of samples
+    c: number of correct samples
+    k: k in pass@k
+    """
+    if n < k:
+        return 1.0 if c > 0 else 0.0
+
+    if c == n:
+        return 1.0
+
+    # 1 - binom(n-c, k) / binom(n, k)
+    try:
+        prob_fail = math.comb(n - c, k) / math.comb(n, k)
+        return 1.0 - prob_fail
+    except Exception:
+        return 0.0
+
+
+def calculate_metrics(problems, total_entries=0, total_tokens=0):
+    num_problems = len(problems.keys())
+    if num_problems == 0:
+        return {
+            "total": 0,
+            "correct": 0,
+            "accuracy": 0.0,
+            "avg_token_length": 0.0,
+            "pass@k": {},
+            "majority_accuracy": 0.0,
+        }
+
+    sum_accuracy = 0.0
+    sum_majority = 0.0
+
+    max_trials = 0
+    for trials in problems.values():
+        max_trials = max(max_trials, len(trials))
+
+    ks_to_track = [1, 2, 4, 5, 8, 10, 16, 32, 64, 100]
+    ks_to_track = [k for k in ks_to_track if k <= max_trials]
+    if max_trials not in ks_to_track and max_trials > 0:
+        ks_to_track.append(max_trials)
+    ks_to_track.sort()
+
+    pass_at_k_sums = defaultdict(float)
+    avg_at_n_sums = defaultdict(float)
+    avg_at_n_counts = defaultdict(int)
+
+    for key, trials in problems.items():
+        n = len(trials)
+        c = sum(1 for t in trials if t["is_correct"])
+
+        # 1. Average Accuracy (Pass@1 effectively, averaged over problems)
+        sum_accuracy += c / n
+
+        # 2. Majority Vote
+        preds = [str(t["predicted"]) for t in trials if t["predicted"]]
+
+        if preds:
+            counter = Counter(preds)
+            most_common = counter.most_common(1)
+            majority_pred = most_common[0][0]
+
+            # Check if majority_pred corresponds to a correct trial
+            majority_is_correct = False
+            for t in trials:
+                # We compare strings here.
+                if t["predicted"] == majority_pred and t["is_correct"]:
+                    majority_is_correct = True
+                    break
+
+            if majority_is_correct:
+                sum_majority += 1.0
+
+        # 3. Pass@k
+        for k in ks_to_track:
+            pass_at_k_sums[k] += calculate_pass_at_k(n, c, k)
+
+        # 4. Avg@n (mean accuracy over first n trials)
+        for k in ks_to_track:
+            if n >= k:
+                first_k_correct = sum(1 for t in trials[:k] if t["is_correct"])
+                avg_at_n_sums[k] += first_k_correct / k
+                avg_at_n_counts[k] += 1
+
+    return {
+        "total": total_entries,
+        "correct": sum(
+            [sum(1 for t in p if t["is_correct"]) for p in problems.values()]
+        ),
+        "accuracy": (sum_accuracy / num_problems * 100),
+        "majority_accuracy": (sum_majority / num_problems * 100),
+        "avg_token_length": (
+            (total_tokens / total_entries) if total_entries > 0 else 0.0
+        ),
+        "pass@k": {k: (pass_at_k_sums[k] / num_problems * 100) for k in ks_to_track},
+        "avg@n": {
+            k: (
+                (avg_at_n_sums[k] / avg_at_n_counts[k] * 100)
+                if avg_at_n_counts[k] > 0
+                else 0.0
+            )
+            for k in ks_to_track
+        },
+    }

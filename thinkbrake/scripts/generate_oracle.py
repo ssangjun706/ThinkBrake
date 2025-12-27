@@ -19,11 +19,15 @@ from thinkbrake.func.utils import (
     get_handler,
     get_models,
     get_parent_category,
-    get_test_case_id,
     get_test_categories,
     load_file,
     split_sentence,
 )
+
+
+def _get_test_case_id(test_case: dict) -> str:
+    test_case_id = f"id_{test_case["id"]}_sentence_{test_case['sentence_idx']}"
+    return test_case_id
 
 
 def save_result(
@@ -96,8 +100,8 @@ async def _generate_results_async(
     writer_thread.start()
 
     try:
-        id_to_entry = {get_test_case_id(entry): entry for entry in entries}
-        ready_queue = deque([get_test_case_id(entry) for entry in entries])
+        id_to_entry = {_get_test_case_id(entry): entry for entry in entries}
+        ready_queue = deque([_get_test_case_id(entry) for entry in entries])
         in_flight = set()
         sem = asyncio.Semaphore(num_workers)
 
@@ -174,7 +178,7 @@ def collect_rollout_cases(
         file_path = category_dir / f"{category}_result.jsonl"
 
         existing_entries = get_oracle_entries_involved(model, category)
-        existing_ids = [get_test_case_id(entry) for entry in existing_entries]
+        existing_ids = [_get_test_case_id(entry) for entry in existing_entries]
 
         entries = split_sentence(
             load_file(file_path),
@@ -183,7 +187,7 @@ def collect_rollout_cases(
         )
 
         filtered_entries = [
-            entry for entry in entries if get_test_case_id(entry) not in existing_ids
+            entry for entry in entries if _get_test_case_id(entry) not in existing_ids
         ]
 
         if len(filtered_entries) > 0:

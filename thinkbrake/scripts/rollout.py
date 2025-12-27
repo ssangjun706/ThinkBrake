@@ -26,28 +26,9 @@ from thinkbrake.func.utils import (
     verify_multiple_choice,
     evaluate_bfcl_entry,
     get_test_case_id,
+    calculate_pass_at_k,
+    calculate_metrics,
 )
-
-
-def calculate_pass_at_k(n, c, k):
-    """
-    Calculate pass@k.
-    n: total number of samples
-    c: number of correct samples
-    k: k in pass@k
-    """
-    if n < k:
-        return 1.0 if c > 0 else 0.0
-
-    if c == n:
-        return 1.0
-
-    # 1 - binom(n-c, k) / binom(n, k)
-    try:
-        prob_fail = math.comb(n - c, k) / math.comb(n, k)
-        return 1.0 - prob_fail
-    except Exception:
-        return 0.0
 
 
 async def _process_entry_async(
@@ -171,10 +152,10 @@ def _evaluate_jsonl_file(file_path: str, sub_category: str = None) -> dict:
                 elif parent_category == "math":
                     ground_truth = parse(f"${item['answer']}$")
                     parsed_pred = parse(item["response"])
-                    predicted = str(parsed_pred)  # Store as string for voting
+                    predicted = str(parsed_pred)
                     is_correct = verify(ground_truth, parsed_pred)
                 elif parent_category == "tool":
-                    if sub_category in ["bfcl-v1", "bfcl-v2"]:
+                    if sub_category in ["bfcl-v1", "bfcl-v2", "api-bank"]:
                         pred_obj, ground_truth, is_correct = evaluate_bfcl_entry(item)
                         predicted = str(pred_obj)
                     else:
@@ -184,13 +165,9 @@ def _evaluate_jsonl_file(file_path: str, sub_category: str = None) -> dict:
                 else:
                     raise ValueError(f"Unknown category found: {parent_category}")
 
-                # Identify unique problem
-                problem_id = item.get("id", "unknown")
-                sentence_idx = item.get("sentence_idx", -1)
+                problem_id = item.get("id")
 
-                key = (problem_id, sentence_idx)
-
-                problems[key].append(
+                problems[problem_id].append(
                     {
                         "predicted": predicted,
                         "is_correct": is_correct,
@@ -202,81 +179,9 @@ def _evaluate_jsonl_file(file_path: str, sub_category: str = None) -> dict:
             logging.error(f"Error evaluating the file {file_path}: {e}")
             return None
 
-    # Aggregation
-    num_problems = len(problems)
-    if num_problems == 0:
-        return {
-            "total": 0,
-            "correct": 0,
-            "accuracy": 0.0,
-            "avg_token_length": 0.0,
-            "pass@k": {},
-            "majority_accuracy": 0.0,
-        }
-
-    sum_accuracy = 0.0
-    sum_majority = 0.0
-
-    # Initialize pass@k sums
-    max_trials = 0
-    for trials in problems.values():
-        max_trials = max(max_trials, len(trials))
-
-    ks_to_track = [1, 2, 4, 5, 8, 10, 16, 32, 64, 100]
-    ks_to_track = [k for k in ks_to_track if k <= max_trials]
-    if max_trials not in ks_to_track and max_trials > 0:
-        ks_to_track.append(max_trials)
-    ks_to_track.sort()
-
-    pass_at_k_sums = defaultdict(float)
-
-    for key, trials in problems.items():
-        n = len(trials)
-        c = sum(1 for t in trials if t["is_correct"])
-
-        # 1. Average Accuracy (Pass@1 effectively, averaged over problems)
-        sum_accuracy += c / n
-
-        # 2. Majority Vote
-        if parent_category == "general":
-            preds = [t["predicted"] for t in trials if t["predicted"]]
-        else:
-            # For math/tool, predicted is already stringified or None
-            preds = [t["predicted"] for t in trials if t["predicted"] is not None]
-
-        if preds:
-            counter = Counter(preds)
-            most_common = counter.most_common(1)
-            majority_pred = most_common[0][0]
-
-            # Check if majority_pred corresponds to a correct trial
-            majority_is_correct = False
-            for t in trials:
-                # We compare strings here.
-                # Note: t["predicted"] is the string representation.
-                if t["predicted"] == majority_pred and t["is_correct"]:
-                    majority_is_correct = True
-                    break
-
-            if majority_is_correct:
-                sum_majority += 1.0
-
-        # 3. Pass@k
-        for k in ks_to_track:
-            pass_at_k_sums[k] += calculate_pass_at_k(n, c, k)
-
-    return {
-        "total": total_entries,
-        "correct": sum(
-            [sum(1 for t in p if t["is_correct"]) for p in problems.values()]
-        ),
-        "accuracy": (sum_accuracy / num_problems * 100),
-        "majority_accuracy": (sum_majority / num_problems * 100),
-        "avg_token_length": (
-            (total_tokens / total_entries) if total_entries > 0 else 0.0
-        ),
-        "pass@k": {k: (pass_at_k_sums[k] / num_problems * 100) for k in ks_to_track},
-    }
+    return calculate_metrics(
+        problems, total_entries=total_entries, total_tokens=total_tokens
+    )
 
 
 def _evaluate_model_results(model_path: str, categories: list[str]) -> dict:
@@ -304,6 +209,7 @@ def _evaluate_model_results(model_path: str, categories: list[str]) -> dict:
                 "majority_accuracy": eval_result["majority_accuracy"],
                 "avg_token_length": eval_result["avg_token_length"],
                 "pass@k": eval_result["pass@k"],
+                "avg@n": eval_result["avg@n"],
             }
 
             logging.info("")
@@ -312,10 +218,21 @@ def _evaluate_model_results(model_path: str, categories: list[str]) -> dict:
             logging.info(
                 f"- Majority Vote    : {eval_result['majority_accuracy']:.2f}%"
             )
-            pk_str = ", ".join(
-                [f"k={k}: {v:.1f}%" for k, v in eval_result["pass@k"].items()]
-            )
-            logging.info(f"- Pass@K           : {pk_str}")
+
+            # Log Pass@K (only max k)
+            if eval_result["pass@k"]:
+                max_k = max(eval_result["pass@k"].keys())
+                logging.info(
+                    f"- Pass@{max_k}         : {eval_result['pass@k'][max_k]:.2f}%"
+                )
+
+            # Log Avg@N (only max n)
+            if eval_result["avg@n"]:
+                max_n = max(eval_result["avg@n"].keys())
+                logging.info(
+                    f"- Avg@{max_n}          : {eval_result['avg@n'][max_n]:.2f}%"
+                )
+
             logging.info(f"- Avg Tokens       : {eval_result['avg_token_length']:.0f}")
             logging.info("")
 

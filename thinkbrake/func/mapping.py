@@ -25,5 +25,5 @@ CATEGORY_MAPPING = {
         "deepscale-r",
     ],
     "general": ["gpqa-diamond", "arc-challenge"],  # "mmlu-redux"],
-    "tool": ["bfcl-v1", "bfcl-v2"],  # , "meta-tool"],
+    "tool": ["bfcl-v1", "bfcl-v2", "api-bank"],  # , "meta-tool"],
 }

@@ -174,7 +174,7 @@ def _evaluate_jsonl_file(file_path: str, sub_category: str = None) -> dict:
                         predicted = None
                         pass
                 else:
-                    raise ValueError
+                    raise ValueError("Unknown category found: {parent_category}")
 
                 if is_correct:
                     correct_count += 1

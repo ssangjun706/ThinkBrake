@@ -15,7 +15,7 @@ MODEL_MAPPING = {
 }
 
 CATEGORY_MAPPING = {
-    "math": ["gsm8k", "math500", "aime2024", "aime2025"],
-    "general": ["gpqa-diamond", "mmlu-redux"],
+    "math": ["gsm8k", "math500", "aime2024", "aime2025", "gsm8k-val"],
+    "general": ["gpqa-diamond", "arc-challenge"],  # "mmlu-redux"],
     "tool": ["bfcl-v1", "bfcl-v2"],  # , "meta-tool"],
 }

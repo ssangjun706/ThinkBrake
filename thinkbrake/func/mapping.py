@@ -15,7 +15,15 @@ MODEL_MAPPING = {
 }
 
 CATEGORY_MAPPING = {
-    "math": ["gsm8k", "gsm8k-val", "math500", "aime2024", "aime2025", "omni-math"],
+    "math": [
+        "gsm8k",
+        "gsm8k-val",
+        "math500",
+        "aime2024",
+        "aime2025",
+        "omni-math",
+        "deepscale-r",
+    ],
     "general": ["gpqa-diamond", "arc-challenge"],  # "mmlu-redux"],
     "tool": ["bfcl-v1", "bfcl-v2"],  # , "meta-tool"],
 }

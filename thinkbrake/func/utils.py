@@ -319,8 +319,8 @@ def get_test_case_id(test_case: dict) -> str:
     if "sentence_idx" in test_case:
         test_case_id += f"_sentence_{test_case['sentence_idx']}"
 
-    trial = test_case.get("trial", 1)
-    test_case_id += f"_trial_{trial}"
+    if "trial" in test_case:
+        test_case_id += f"_trial_{test_case["trial"]}"
 
     return test_case_id
 
@@ -465,6 +465,7 @@ def collect_test_cases(
                 if get_test_case_id(candidate) not in existing_ids:
                     data.append(candidate)
 
+    random.shuffle(data)
     return data
 
 

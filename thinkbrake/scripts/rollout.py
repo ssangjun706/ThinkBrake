@@ -140,11 +140,6 @@ async def _generate_results_async(args, model, entries: list[dict]) -> None:
 
                     pbar.update()
 
-                    for child_id in children_of[entry_id]:
-                        dependencies[child_id].discard(entry_id)
-                        if not dependencies[child_id]:
-                            ready_queue.append(child_id)
-
     finally:
         write_queue.put(None)
         writer_thread.join()
@@ -152,8 +147,6 @@ async def _generate_results_async(args, model, entries: list[dict]) -> None:
 
 
 def _evaluate_jsonl_file(file_path: str, sub_category: str = None) -> dict:
-    # Storage for grouping by problem ID
-    # Key: (id, sentence_idx) -> List of {predicted, is_correct, ground_truth}
     problems = defaultdict(list)
 
     total_tokens = 0

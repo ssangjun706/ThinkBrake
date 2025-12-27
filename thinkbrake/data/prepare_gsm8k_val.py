@@ -12,7 +12,7 @@ def main():
     parser.add_argument(
         "--num_samples",
         type=int,
-        default=500,
+        default=200,
         help="Number of samples to select for validation",
     )
     parser.add_argument(

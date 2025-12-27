@@ -315,9 +315,12 @@ def get_handler(pretrained_model_name_or_path: str) -> BaseHandler:
 
 
 def get_test_case_id(test_case: dict) -> str:
-    test_case_id = str(test_case["id"])
+    test_case_id = f"id_{test_case["id"]}"
     if "sentence_idx" in test_case:
-        test_case_id += f"_{test_case['sentence_idx']}"
+        test_case_id += f"_sentence_{test_case['sentence_idx']}"
+
+    trial = test_case.get("trial", 1)
+    test_case_id += f"_trial_{trial}"
 
     return test_case_id
 
@@ -329,7 +332,8 @@ def sort_key(item: dict) -> tuple:
         num = int(num)
 
     sentence_id = item.get("sentence_idx", 0)
-    return (num, sentence_id)
+    trial = item.get("trial", 1)
+    return (num, sentence_id, trial)
 
 
 def load_file(file_path: str) -> list[dict]:
@@ -435,6 +439,7 @@ def collect_test_cases(
     categories: list[str],
     prefix: str,
     threshold: Optional[float] = None,
+    trial_count: int = 1,
 ) -> list[dict]:
     data = []
 
@@ -453,11 +458,13 @@ def collect_test_cases(
             )
         ]
 
-        for idx, entry in enumerate(load_file(file_path)):
-            if get_test_case_id(entry) not in existing_ids:
-                data.append({"id": f"{category}_{idx}", **entry})
+        for idx, base_entry in enumerate(load_file(file_path)):
+            for t in range(1, trial_count + 1):
+                candidate = base_entry.copy()
+                candidate["trial"] = t
+                if get_test_case_id(candidate) not in existing_ids:
+                    data.append(candidate)
 
-    random.shuffle(data)
     return data
 
 
@@ -501,8 +508,15 @@ def save_result(
         sorted_entries = sorted(existing_entries.values(), key=sort_key)
         with open(file_path, "w") as f:
             for entry in sorted_entries:
-                content = json.dumps(entry) + "\n"
-                f.write(content)
+                new_entry = {}
+                new_entry["id"] = entry["id"]
+
+                if "sentence_idx" in entry:
+                    new_entry["sentence_idx"] = entry["sentence_idx"]
+
+                new_entry["trial"] = entry["trial"]
+                new_entry.update(entry)
+                f.write(json.dumps(new_entry) + "\n")
             f.flush()
 
 

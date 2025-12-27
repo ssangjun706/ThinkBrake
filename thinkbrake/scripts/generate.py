@@ -3,9 +3,9 @@ import logging
 import queue
 import threading
 import asyncio
-from collections import defaultdict, deque
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from tqdm import tqdm
 from thinkbrake.func.constants import THINKBRAKE_PREFIX
@@ -17,6 +17,7 @@ from thinkbrake.func.utils import (
     get_test_categories,
     get_thresholds,
     save_result,
+    get_test_case_id,
 )
 
 
@@ -56,14 +57,14 @@ async def _generate_results_async(args, entries: List[dict]) -> None:
     write_queue = queue.Queue()
 
     def _writer():
-        """Background thread function to write results to JSONL files."""
         while True:
             item = write_queue.get()
             if item is None:
                 break
+
             save_result(
-                args.model,
-                item,
+                model=args.model,
+                result=item,
                 prefix=THINKBRAKE_PREFIX,
                 threshold=args.threshold,
             )
@@ -73,25 +74,8 @@ async def _generate_results_async(args, entries: List[dict]) -> None:
     writer_thread.start()
 
     try:
-        # Build dependency graph: entry_id -> set of dependency_ids
-        dependencies: Dict[str, set] = {
-            entry["id"]: set(entry.get("depends_on", [])) for entry in entries
-        }
-        # Reverse graph: dependency_id -> list of child_ids
-        children_of: Dict[str, List[str]] = defaultdict(list)
-        for entry in entries:
-            for dependency_id in entry.get("depends_on", []):
-                children_of[dependency_id].append(entry["id"])
-
-        id_to_entry = {entry["id"]: entry for entry in entries}
-
-        ready_queue = deque(
-            [
-                entry_id
-                for entry_id, dependency_ids in dependencies.items()
-                if not dependency_ids
-            ]
-        )
+        id_to_entry = {get_test_case_id(entry): entry for entry in entries}
+        ready_queue = deque([get_test_case_id(entry) for entry in entries])
 
         in_flight = set()
         sem = asyncio.Semaphore(num_workers)
@@ -121,7 +105,6 @@ async def _generate_results_async(args, entries: List[dict]) -> None:
                 if not in_flight:
                     break
 
-                # Wait for at least one task to complete
                 done, in_flight = await asyncio.wait(
                     in_flight, return_when=asyncio.FIRST_COMPLETED
                 )
@@ -137,12 +120,6 @@ async def _generate_results_async(args, entries: List[dict]) -> None:
 
                     pbar.update()
 
-                    # Unlock dependencies
-                    for child_id in children_of[entry_id]:
-                        dependencies[child_id].discard(entry_id)
-                        if not dependencies[child_id]:
-                            ready_queue.append(child_id)
-
     finally:
         write_queue.put(None)
         writer_thread.join()
@@ -157,6 +134,7 @@ def main(args):
         categories=all_categories,
         threshold=args.threshold,
         prefix=THINKBRAKE_PREFIX,
+        trial_count=args.trial,
     )
 
     if len(test_entries) == 0:
@@ -203,6 +181,12 @@ def parse_args():
         type=str,
         default=None,
         help="Comma-separated threshold values for early stopping (e.g., '0.1,0.5,0.9'). If not specified, runs without threshold.",
+    )
+    argparser.add_argument(
+        "--trial",
+        type=int,
+        default=1,
+        help="Number of trials per test case.",
     )
     argparser.add_argument(
         "--num_workers",
